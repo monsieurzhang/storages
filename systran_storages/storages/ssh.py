@@ -181,7 +181,7 @@ class RemoteStorage(Storage):
                         if recursive:
                             getfiles_rec(fullpath)
                         else:
-                            listfile[self._external_path(fullpath) + '/'] = {'is_dir': True}
+                            listfile[self._external_path(fullpath) + '/'] = {'is_dir': True, 'last_modified': f.st_mtime}
                     else:
                         listfile[self._external_path(fullpath)] = {'size': f.st_size,
                                                                    'last_modified': f.st_mtime}
