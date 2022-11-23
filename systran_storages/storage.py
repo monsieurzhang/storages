@@ -7,7 +7,7 @@ from systran_storages import storages
 LOGGER = logging.getLogger(__name__)
 
 
-class StorageClient(object):
+class StorageClient:
     """Client to get and push files to a storage."""
 
     def __init__(self, config=None):
@@ -24,12 +24,13 @@ class StorageClient(object):
         """Returns True if the path references a storage managed by this client."""
         if self._config is None:
             return False
-        fields = path.split(':')
+        fields = path.split(':', 1)
         return len(fields) == 2 and fields[0] in self._config
 
-    def parse_managed_path(self, path):
+    @staticmethod
+    def parse_managed_path(path):
         """Returns the storage ID and the full path from a managed path."""
-        fields = path.split(':')
+        fields = path.split(':', 1)
         return fields[0], fields[1]
 
     def _get_storage(self, path, storage_id=None):
@@ -37,9 +38,7 @@ class StorageClient(object):
         from the path. Defaults to the local filesystem.
         """
         if storage_id is None:
-            fields = path.split(':')
-            if len(fields) > 2:
-                raise ValueError('invalid path format: %s' % path)
+            fields = path.split(':', 1)
             if len(fields) == 2:
                 storage_id = fields[0]
                 path = fields[1]
@@ -75,7 +74,7 @@ class StorageClient(object):
                         port=config.get('port', 22),
                         basedir=config.get('basedir'))
                 elif config['type'] == 'http':
-                    client = storages.HTTPStorage(
+                    client = storages.HTTPStorage(  # pylint: disable=abstract-class-instantiated
                         storage_id,
                         config['get_pattern'],
                         pattern_push=config.get('post_pattern'),
@@ -149,12 +148,12 @@ class StorageClient(object):
         client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
         return client.stat(remote_path)
 
-    def stream(self, remote_path, buffer_size=1024, storage_id=None):
+    def stream(self, remote_path, buffer_size=1024, storage_id=None, stream_format=None):
         """Returns a generator to stream a remote_path file.
         `buffer_size` is the maximal size of each chunk
         """
         client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
-        return client.stream(remote_path, buffer_size)
+        return client.stream(remote_path, buffer_size, stream_format)
 
     def stream_corpus_manager(self, remote_path, remote_id, remote_format,
                               buffer_size=1024, storage_id=None):
@@ -164,30 +163,32 @@ class StorageClient(object):
         client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
         return client.stream_corpus_manager(remote_id, remote_format, buffer_size)
 
-    def push(self, local_path, remote_path, storage_id=None):
+    def push(self, local_path, remote_path, storage_id=None, lp=None):
         """Pushes a local_path file or directory to storage."""
         if not os.path.exists(local_path):
             raise RuntimeError('%s not found' % local_path)
         if local_path == remote_path:
-            return
+            return None
         LOGGER.info('Uploading %s to %s', local_path, remote_path)
         client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
-        return client.push(local_path, remote_path)
+        return client.push(local_path, remote_path, lp=lp)
 
     def push_corpus_manager(self, local_path, remote_path, corpus_id, user_data, storage_id=None):
         """Pushes a local_path file or directory to storage."""
         if not os.path.exists(local_path):
             raise RuntimeError('%s not found' % local_path)
         if local_path == remote_path:
-            return
+            return None
         LOGGER.info('Uploading %s to %s', local_path, remote_path)
         client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
         client.push_corpus_manager(local_path, remote_path, corpus_id, user_data)
+        return None
 
-    def partition_auto(self, data, training_path, testing_path, remote_path, storage_id, partition_value, is_percent):
+    def partition_auto(self, data, training_path, testing_path, remote_path, storage_id, partition_value, is_percent,
+                       lp):
         LOGGER.info('Partitioning %s in %s to %s', str(data), training_path, testing_path)
         client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
-        return client.partition_auto(data, training_path, testing_path, partition_value, is_percent)
+        return client.partition_auto(data, training_path, testing_path, partition_value, is_percent, lp)
 
     def mkdir(self, local_path, remote_path, storage_id=None):
         """Pushes a local_path file or directory to storage."""
@@ -208,13 +209,13 @@ class StorageClient(object):
 
         client.mkdir(full_path)
 
-    def listdir(self, remote_path, recursive=False, storage_id=None):
+    def listdir(self, remote_path, recursive=False, storage_id=None, options=None):
         """Lists of the files on a storage:
         * if `recursive` returns all of the files present recursively in the directory
         * if not `recursive` returns only first level, directory are indicated with trailing '/'
         """
         client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
-        return client.listdir(remote_path, recursive)
+        return client.listdir(remote_path, recursive, False, options)
 
     def list(self, remote_path, recursive=False, storage_id=None):
         """Lists of the files on a storage:
@@ -276,3 +277,23 @@ class StorageClient(object):
         """Checks if file or directory exists on storage."""
         client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
         return client.exists(remote_path)
+
+    def similar(self, remote_path, corpus_ids, search_options, input_corpus, output_corpus_name, storage_id=None):
+        """Extract a similar corpus from a large corpus dataset using an input corpus."""
+        client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
+        return client.similar(corpus_ids, search_options, input_corpus, output_corpus_name)
+
+    def tag_add(self, remote_path, corpus_id, tag, storage_id=None):
+        """Add a tag associated with a corpus."""
+        client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
+        return client.tag_add(corpus_id, tag)
+
+    def tag_remove(self, remote_path, corpus_id, tag, storage_id=None):
+        """Remove a tag associated with a corpus."""
+        client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
+        return client.tag_remove(corpus_id, tag)
+
+    def detail(self, remote_path, corpus_id, storage_id=None):
+        """Return the details of the corpus."""
+        client, remote_path = self._get_storage(remote_path, storage_id=storage_id)
+        return client.detail(corpus_id)

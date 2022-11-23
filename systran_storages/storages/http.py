@@ -16,7 +16,7 @@ class HTTPStorage(Storage):
     """Simple http file-only storage."""
 
     def __init__(self, storage_id, pattern_get, pattern_push=None, pattern_list=None):
-        super(HTTPStorage, self).__init__(storage_id)
+        super().__init__(storage_id)
         self._pattern_get = pattern_get
         self._pattern_push = pattern_push
         self._pattern_list = pattern_list
@@ -34,7 +34,10 @@ class HTTPStorage(Storage):
         # not optimized for http download yet
         return False
 
-    def stream(self, remote_path, buffer_size=1024):
+    def _get_checksum_file(self, local_path):
+        return None
+
+    def stream(self, remote_path, buffer_size=1024, stream_format=None):
         res = requests.get(self._pattern_get % remote_path, stream=True)
         if res.status_code != 200:
             raise RuntimeError(
@@ -60,7 +63,7 @@ class HTTPStorage(Storage):
                     remote_path,
                     res.status_code))
 
-    def listdir(self, remote_path, recursive=False, is_file=False):
+    def listdir(self, remote_path, recursive=False, is_file=False, options=None):
         if self._pattern_list is None:
             raise ValueError('http storage %s can not handle list request' % self._storage_id)
 
@@ -92,5 +95,5 @@ class HTTPStorage(Storage):
     def exists(self, remote_path):
         raise NotImplementedError()
 
-    def _internal_path(self, remote_path):
-        return remote_path
+    def _internal_path(self, path):
+        return path

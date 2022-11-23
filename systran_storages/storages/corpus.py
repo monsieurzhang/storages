@@ -2,8 +2,6 @@
 import json
 from datetime import datetime
 import logging
-import shutil
-import tempfile
 import os
 import uuid
 
@@ -21,7 +19,7 @@ class CMStorages(Storage):
     """Corpus Manager storage."""
 
     def __init__(self, storage_id, host_url, root_folder, account_id=None):
-        super(CMStorages, self).__init__(storage_id)
+        super().__init__(storage_id)
         self.host_url = host_url
         self.account_id = account_id
         self.resource_type = "corpusmanager"
@@ -39,7 +37,8 @@ class CMStorages(Storage):
         self._get_main_file_safe(remote_path, local_path)
         self._get_checksum_file_safe(remote_path, local_path)
 
-    def _get_checksum_file_name(self, local_path):
+    @staticmethod
+    def _get_checksum_file_name(local_path):
         (local_dir, basename) = os.path.split(local_path)
         return os.path.join(local_dir, "." + basename + ".md5")
 
@@ -107,7 +106,8 @@ class CMStorages(Storage):
         with open(self._get_checksum_file_name(local_path), "w") as file_writer:
             file_writer.write(file_checksum)
 
-    def _alias_files_exist(self, local_path):
+    @staticmethod
+    def _alias_files_exist(local_path):
         dirname = os.path.dirname(local_path)
         number_of_files = 0
         for filename in os.listdir(dirname):
@@ -133,7 +133,7 @@ class CMStorages(Storage):
     def stream_corpus_manager(self, remote_id, remote_format, buffer_size=1024):
         if remote_format == "" or remote_format is None:
             remote_format = "text/bitext"
-        if remote_format not in ['application/x-tmx+xml', 'text/bitext']:
+        if remote_format not in ['application/x-tmx+xml', 'text/bitext', 'systran/edition-corpus']:
             raise RuntimeError(
                 'Error format file %s, only support format of the corpus (application/x-tmx+xml, '
                 'text/bitext)' % remote_format)
@@ -154,9 +154,10 @@ class CMStorages(Storage):
 
         return generate()
 
-    def stream(self, remote_path, buffer_size=1024):
+    def stream(self, remote_path, buffer_size=1024, stream_format=None):
         corpus = self._get_corpus_info_from_remote_path(remote_path)
-        return self.stream_corpus_manager(corpus.get("id"), corpus.get("format"), buffer_size)
+        return self.stream_corpus_manager(corpus.get("id"), stream_format if stream_format else corpus.get("format"),
+                                          buffer_size)
 
     def push_corpus_manager(self, local_path, remote_path, corpus_id, user_data):
 
@@ -166,7 +167,7 @@ class CMStorages(Storage):
             format_path = 'application/x-tmx+xml'
         else:
             raise ValueError(
-                'cannot push %s, only support format of the corpus (application/x-tmx+xml, '
+                'Cannot push %s, only support format of the corpus (application/x-tmx+xml, '
                 'text/bitext)' % local_path)
 
         remote_path = '/' + self.root_folder + '/' + remote_path + os.path.basename(local_path)
@@ -186,7 +187,7 @@ class CMStorages(Storage):
         status = "id" in response.json()
         return status
 
-    def listdir(self, remote_path, recursive=False, is_file=False):
+    def listdir(self, remote_path, recursive=False, is_file=False, options=None):
         if not is_file and not remote_path.endswith('/'):
             remote_path += '/'
         listdir = {}
@@ -195,11 +196,14 @@ class CMStorages(Storage):
             'directory': self._create_path_from_root(remote_path),
             'accountId': self.account_id
         }
-        if recursive:
+        if recursive or is_file:
             data = {
                 'prefix': self._create_path_from_root(remote_path),
                 'accountId': self.account_id
             }
+
+        if options:
+            data.update(options)
 
         response = requests.get(self.host_url + '/corpus/list', params=data)
 
@@ -221,12 +225,15 @@ class CMStorages(Storage):
                                          'id': key.get('id'),
                                          'type': self.resource_type,
                                          'status': key.get('status'),
+                                         'errorDesc': key.get('errorDesc', ''),
+                                         'tags': key.get('tags'),
                                          'sourceLanguage': key.get('sourceLanguage'),
                                          'targetLanguages': key.get('targetLanguages'),
                                          'last_modified': datetime_to_timestamp(
                                              date_time),
                                          'alias_names': [filename + "." + key.get('sourceLanguageCode', ''),
-                                                         filename + "." + key.get('targetLanguageCodes', [''])[0]]}
+                                                         filename + "." + (key.get('targetLanguageCodes')[0]
+                                                                           if key.get('targetLanguageCodes') else '')]}
                     if recursive:
                         folder = os.path.dirname(key['filename'][len(self.root_folder) + 1:])
                         all_dirs = folder.split("/")
@@ -267,7 +274,7 @@ class CMStorages(Storage):
             for key in list_objects["files"]:
                 if self._create_path_from_root(remote_path) == key.get("filename"):
                     return key
-        raise ValueError("corpus not found from remote_path: " + remote_path)
+        raise ValueError("Corpus not found from remote_path: " + remote_path)
 
     def rename(self, old_remote_path, new_remote_path):
         raise NotImplementedError()
@@ -276,40 +283,64 @@ class CMStorages(Storage):
         return True
 
     def search(self, remote_ids, search_query=None, nb_skip=0, nb_limit=0):
-        params = {
-            'skip': int(nb_skip),
-            'limit': int(nb_limit),
-            'accountId': self.account_id,
-        }
-
-        data = None
+        mp_encoder_content = [
+            ('skip', str(int(nb_skip))),
+            ('limit', str(int(nb_limit))),
+            ('accountId', self.account_id)
+        ]
+        for rid in remote_ids:
+            mp_encoder_content.append(('id', rid))
+        is_async_mode = False
         if search_query:
+            if search_query.get('searchMode'):
+                mp_encoder_content.append(('searchMode', search_query['searchMode']))
+            if search_query.get('xmlEscape'):
+                mp_encoder_content.append(('xmlEscape', search_query['xmlEscape']))
+            if search_query.get('filename'):
+                is_async_mode = True
+                mp_encoder_content.append(('filename', search_query['filename']))
+                if search_query.get('accountId'):
+                    mp_encoder_content.remove(('accountId', self.account_id))
+                    mp_encoder_content.append(('readOnlyAccountId', self.account_id))
+                    mp_encoder_content.append(('accountId', search_query['accountId']))
+            if search_query.get('source_language'):
+                mp_encoder_content.append(('srcLang', search_query['source_language']))
+            if search_query.get('target_language'):
+                mp_encoder_content.append(('tgtLang', search_query['target_language']))
+
             data = {
-                'ids': remote_ids,
                 'search': {}
             }
             if search_query.get('source') and search_query['source'].get('keyword'):
                 data['search']['srcQuery'] = search_query['source']['keyword']
+                if search_query['source'].get('is_regex_search'):
+                    data['search'].update({'srcIsRegex': True})
+                    data['search']['srcIsCaseInsensitive'] = search_query['source'].get('isCaseInsensitive')
             if search_query.get('target') and search_query['target'].get('keyword'):
                 data['search']['tgtQuery'] = search_query['target']['keyword']
-        else:
-            params['id'] = remote_ids[0]
+                if search_query['target'].get('is_regex_search'):
+                    data['search'].update({'tgtIsRegex': True})
+                    data['search']['tgtIsCaseInsensitive'] = search_query['target'].get('isCaseInsensitive')
 
-        response = requests.post(self.host_url + '/corpus/segment/list', json=data, params=params)
+            if data.get('search'):
+                mp_encoder_content.append(('query', json.dumps(data)))
+
+        mp_encoder = MultipartEncoder(mp_encoder_content)
+        response = requests.request('POST', self.host_url + '/corpus/segment/list', data=mp_encoder,
+                                    headers={'Content-Type': mp_encoder.content_type})
         if response.status_code != 200:
             raise ValueError("Cannot list segment '%s' in '%s'." % (search_query, remote_ids))
-        list_segment = response.json()
-        for segment in list_segment.get("segments"):
-            if segment.get("corpus"):
-                for corpus in segment["corpus"]:
-                    corpus["filename"] = corpus["filename"].replace("/" + self.root_folder, "")
-        if "error" in list_segment:
-            raise ValueError("Cannot list segment '%s' in '%s'." % (remote_ids, list_segment['error']))
-        return list_segment.get("segments"), list_segment.get('total')
 
-    def seg_delete(self, corpus_id, list_seg_id):
+        json_response = response.json()
+        if "error" in json_response:
+            raise ValueError("Cannot list segment '%s' in '%s'." % (remote_ids, json_response['error']))
+        if is_async_mode:
+            return json_response
+        return json_response.get("segments"), json_response.get('total')
+
+    def seg_delete(self, corpus_id, seg_ids):
         deleted_seg = 0
-        for seg_id in list_seg_id:
+        for seg_id in seg_ids:
             params = {
                 'accountId': self.account_id,
                 'id': corpus_id,
@@ -364,16 +395,17 @@ class CMStorages(Storage):
             raise ValueError("Bad remote_path: " + remote_path)
         if len(directoryArray) == 1 and directoryArray[0] == '':
             return True
-        else:
-            parentDirectory = '/' + '/'.join(directoryArray[:-1])
-            data = {
-                'directory': parentDirectory,
-                'accountId': self.account_id
-            }
-            response = requests.get(self.host_url + '/corpus/list', params=data)
-            if "directories" in response.json():
-                if directoryArray[-1] in response.json()["directories"]:
-                    return True
+
+        parentDirectory = '/' + '/'.join(directoryArray[:-1])
+        data = {
+            'directory': parentDirectory,
+            'accountId': self.account_id
+        }
+        response = requests.get(self.host_url + '/corpus/list', params=data)
+        if "directories" in response.json():
+            if directoryArray[-1] in response.json()["directories"]:
+                return True
+
         return False
 
     def exists(self, remote_path):
@@ -386,7 +418,9 @@ class CMStorages(Storage):
         response = requests.get(self.host_url + '/corpus/exists', params=data)
         return response.status_code == 200 and "true" in str(response.content)
 
-    def push_file(self, local_path, remote_path):
+    def push_file(self, local_path, remote_path, lp=None):
+        if lp is None:
+            lp = {}
         data = {
             'filename': self._create_path_from_root(remote_path),
             'accountId': self.account_id
@@ -404,14 +438,22 @@ class CMStorages(Storage):
                 format_path = 'application/x-tmx+xml'
             else:
                 raise ValueError(
-                    'cannot push %s, only support format of the corpus (application/x-tmx+xml, '
+                    'Cannot push %s, only support format of the corpus (application/x-tmx+xml, '
                     'text/bitext)' % local_path)
+            source = lp.get('source', '')
+            targets = lp.get('targets', [])
+            import_options = {
+                "cleanFormatting": True,
+                "removeDuplicates": True,
+                "expectedSourceLanguage": source,
+                "expectedTargetLanguages": targets
+            }
 
             mp_encoder = MultipartEncoder(
                 [
                     ('accountId', self.account_id),
                     ('format', format_path),
-                    ('importOptions', '{"cleanFormatting": true}'),
+                    ('importOptions', json.dumps(import_options)),
                     ('filename', self._create_path_from_root(remote_path)),
                     ('corpus', data)
                 ]
@@ -419,11 +461,14 @@ class CMStorages(Storage):
             response = requests.post(self.host_url + '/corpus/import', data=mp_encoder,
                                      headers={'Content-Type': mp_encoder.content_type})
             if response.status_code != 200:
+                error_message = json.loads(response.content).get('error')
+                if error_message:
+                    raise ValueError("Cannot import file(s) : %s" % error_message)
                 raise ValueError(
                     "Cannot import file '%s' in '%s'." % (local_path, remote_path))
             return response.json()
 
-    def partition_auto(self, local_path, training_path, testing_path, partition_value, is_percent):
+    def partition_auto(self, local_path, training_path, testing_path, partition_value, is_percent, lp):
         remote_path = training_path + os.path.basename(local_path)
         training_file = training_path + os.path.basename(local_path)
         testing_file = testing_path + os.path.basename(local_path)
@@ -437,7 +482,7 @@ class CMStorages(Storage):
             data_partition = [
                                 {'segments': str(100-partition_value), 'filename': str(training_file)},
                                 {'segments': str(partition_value), 'filename': str(testing_file)}
-                            ]
+            ]
         else:
             data_partition = {
                 'usePercentage': False,
@@ -461,14 +506,22 @@ class CMStorages(Storage):
                 format_path = 'application/x-tmx+xml'
             else:
                 raise ValueError(
-                    'cannot push %s, only support format of the corpus (application/x-tmx+xml, '
+                    'Cannot push %s, only support format of the corpus (application/x-tmx+xml, '
                     'text/bitext)' % local_path)
+            source = lp.get('source', '')
+            targets = lp.get('targets', [])
+            import_options = {
+                "cleanFormatting": True,
+                "removeDuplicates": True,
+                "expectedSourceLanguage": source,
+                "expectedTargetLanguages": targets
+            }
 
             mp_encoder = MultipartEncoder(
                 [
                     ('accountId', self.account_id),
                     ('format', format_path),
-                    ('importOptions', '{"cleanFormatting": true}'),
+                    ('importOptions', json.dumps(import_options)),
                     ('filename', self._create_path_from_root(remote_path)),
                     ('partition', data_partition_str),
                     ('corpus', data)
@@ -477,8 +530,10 @@ class CMStorages(Storage):
             response = requests.post(self.host_url + '/corpus/import/partition', data=mp_encoder,
                                      headers={'Content-Type': mp_encoder.content_type})
             if response.status_code != 200:
-                raise ValueError(
-                    "Cannot import file '%s' in '%s'." % (local_path, remote_path))
+                error_message = json.loads(response.content).get('error')
+                if error_message:
+                    raise ValueError("Cannot import file(s) : %s" % error_message)
+                raise ValueError("Cannot import file '%s' in '%s'." % (local_path, remote_path))
             return response.json()
 
     def _create_path_from_root(self, remote_path):
@@ -500,13 +555,56 @@ class CMStorages(Storage):
             return return_value[0:p+len(corpus_format)]
         return return_value
 
-    def _internal_path(self, remote_path):
-        return self.path_without_starting_slash(remote_path)
+    def _internal_path(self, path):
+        return self.path_without_starting_slash(path)
 
-    def path_without_starting_slash(self, remote_path):
+    @staticmethod
+    def path_without_starting_slash(remote_path):
         if remote_path.startswith('/'):
             return remote_path[1:]
         return remote_path
 
     def stat(self, remote_path):
         pass
+
+    def similar(self, corpus_ids, search_options, input_corpus, output_corpus_name):
+        params = {
+            **search_options,
+            'filename': output_corpus_name
+        }
+        response = requests.post(self.host_url + '/corpus/similar', params=params, data={'id': corpus_ids},
+                                 files=[('corpus', input_corpus)])
+        if response.status_code != 200:
+            raise RuntimeError(
+                'Cannot start similar search. %s' % response.text)
+        return response.json()['id']
+
+    def tag_add(self, corpus_id, tag):
+        data = {
+            'accountId': self.account_id,
+            'id': corpus_id
+        }
+        response = requests.post(self.host_url + '/corpus/tags/' + tag, data=data)
+        if response.status_code != 200:
+            raise ValueError(
+                "Cannot add tag '%s' in '%s'." % (tag, corpus_id))
+        return response.json()
+
+    def tag_remove(self, corpus_id, tag):
+        data = {
+            'accountId': self.account_id,
+            'id': corpus_id
+        }
+        response = requests.delete(self.host_url + '/corpus/tags/' + tag, data=data)
+        if response.status_code != 200:
+            raise ValueError(
+                "Cannot remove tag '%s' in '%s'." % (tag, corpus_id))
+        return response.json()
+
+    def detail(self, corpus_id):
+        params = {
+            'accountId': self.account_id,
+            'id': corpus_id
+        }
+        response = requests.get(self.host_url + '/corpus/details', params=params)
+        return response.json().get('files')

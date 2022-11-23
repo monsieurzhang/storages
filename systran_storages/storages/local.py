@@ -14,7 +14,7 @@ class LocalStorage(Storage):
     """Storage using the local filesystem."""
 
     def __init__(self, storage_id=None, basedir=None):
-        super(LocalStorage, self).__init__(storage_id or "local")
+        super().__init__(storage_id or "local")
         self._basedir = basedir
 
     def _get_file_safe(self, remote_path, local_path):
@@ -33,7 +33,7 @@ class LocalStorage(Storage):
         return stat_remote.st_mtime == stat_local.st_mtime and\
             stat_remote.st_size == stat_local.st_size
 
-    def stream(self, remote_path, buffer_size=1024):
+    def stream(self, remote_path, buffer_size=1024, stream_format=None):
         def generate():
             """generator function to stream local file"""
             with open(remote_path, "rb") as f:
@@ -63,7 +63,7 @@ class LocalStorage(Storage):
             return {'size': stat.st_size, 'last_modified': stat.st_mtime}
         return False
 
-    def listdir(self, remote_path, recursive=False, is_file=False):
+    def listdir(self, remote_path, recursive=False, is_file=False, options=None):
         listfile = {}
 
         if is_file:
@@ -116,3 +116,27 @@ class LocalStorage(Storage):
         if self._basedir:
             return os.path.relpath(path, self._basedir)
         return path
+
+    def _get_checksum_file(self, local_path):
+        pass
+
+    def delete_corpus_manager(self, corpus_id):
+        pass
+
+    def push_corpus_manager(self, local_path, remote_path, corpus_id, user_data):
+        pass
+
+    def search(self, remote_ids, search_query, nb_skip, nb_limit):
+        pass
+
+    def seg_add(self, corpus_id, segments):
+        pass
+
+    def seg_delete(self, corpus_id, seg_ids):
+        pass
+
+    def seg_modify(self, corpus_id, seg_id, tgt_id, tgt_seg, src_seg):
+        pass
+
+    def stream_corpus_manager(self, remote_id, remote_format, buffer_size=1024):
+        pass

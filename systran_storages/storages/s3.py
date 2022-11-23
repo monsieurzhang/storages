@@ -19,7 +19,7 @@ class S3Storage(Storage):
 
     def __init__(self, storage_id, bucket_name, access_key_id=None, secret_access_key=None,
                  region_name=None, assume_role=None, transfer_config=None):
-        super(S3Storage, self).__init__(storage_id)
+        super().__init__(storage_id)
         if assume_role is not None:
             if not assume_role.get('role_arn') or not assume_role.get('role_session_name'):
                 raise ValueError('invalid "assume_role" configuration: "role_arn" and '
@@ -100,7 +100,7 @@ class S3Storage(Storage):
         except botocore.exceptions.ClientError:
             return False
 
-    def stream(self, remote_path, buffer_size=1024):
+    def stream(self, remote_path, buffer_size=1024, stream_format=None):
         body = self._s3.Object(self._bucket_name, remote_path).get()['Body']
 
         def generate():
@@ -109,7 +109,7 @@ class S3Storage(Storage):
 
         return generate()
 
-    def listdir(self, remote_path, recursive=False, is_file=False):
+    def listdir(self, remote_path, recursive=False, is_file=False, options=None):
         if not is_file and remote_path != '' and not remote_path.endswith('/'):
             remote_path += '/'
         listdir = {}
@@ -210,3 +210,24 @@ class S3Storage(Storage):
         if path.startswith('/'):
             return path[1:]
         return path
+
+    def delete_corpus_manager(self, corpus_id):
+        pass
+
+    def push_corpus_manager(self, local_path, remote_path, corpus_id, user_data):
+        pass
+
+    def search(self, remote_ids, search_query, nb_skip, nb_limit):
+        pass
+
+    def seg_add(self, corpus_id, segments):
+        pass
+
+    def seg_delete(self, corpus_id, seg_ids):
+        pass
+
+    def seg_modify(self, corpus_id, seg_id, tgt_id, tgt_seg, src_seg):
+        pass
+
+    def stream_corpus_manager(self, remote_id, remote_format, buffer_size=1024):
+        pass
