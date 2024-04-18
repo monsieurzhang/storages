@@ -164,7 +164,11 @@ class RemoteStorage(Storage):
             full_path.append(f)
             subpath = os.sep.join(full_path)
             if subpath != '' and not self.exists(subpath):
-                client.mkdir(subpath)
+                try:
+                    client.mkdir(subpath)
+                except IOError as err:
+                    if not self.exists(subpath):
+                        raise err
 
     def _ls(self, client, remote_path, recursive=False, is_file=False):
         listfile = {}
